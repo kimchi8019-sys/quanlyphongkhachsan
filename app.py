@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
+st.image("VT.jpg", use_container_width=True)
 DB_NAME = "hotel.db"
 
 
