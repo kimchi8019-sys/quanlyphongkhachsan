@@ -1,5 +1,6 @@
 import streamlit as st
-import sqlite3
+import mysql.connector
+from mysql.connector import Error, IntegrityError
 from datetime import datetime, date
 import pandas as pd
 
@@ -13,19 +14,67 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-st.image("VT.jpg", use_container_width=True)
-DB_NAME = "hotel.db"
+# Hình ảnh tùy chọn: nếu có VT.jpg trong cùng thư mục sẽ hiển thị.
+import os
+if os.path.exists("VT.jpg"):
+    st.image("VT.jpg", use_container_width=True)
+
+# ============================================================
+# MYSQL AIVEN
+# ============================================================
+DB_CONFIG = {
+    "host": "mysql-1b346c1b-kimchi8019-4ea9.e.aivencloud.com",
+    "port": 21314,
+    "user": "avnadmin",
+    "password": "AVNS_ZuLUVTHk6cKBskjg0Kp",
+    "database": "smart_tour",
+    "connection_timeout": 15,
+    "autocommit": False,
+}
+DB_NAME = "smart_tour"
 
 
 # ============================================================
-# KẾT NỐI DATABASE
+# KẾT NỐI DATABASE MYSQL AIVEN
 # ============================================================
+
+def get_server_connection():
+    config = DB_CONFIG.copy()
+    config.pop("database", None)
+    return mysql.connector.connect(**config)
+
+
+def create_database_if_not_exists():
+    server_conn = None
+    cursor = None
+    try:
+        server_conn = get_server_connection()
+        cursor = server_conn.cursor()
+        cursor.execute(
+            f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}` "
+            "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        )
+        server_conn.commit()
+        return True
+    except Error as e:
+        st.error("Không thể tạo/kiểm tra database MySQL Aiven.")
+        st.error(str(e))
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if server_conn and server_conn.is_connected():
+            server_conn.close()
+
 
 def get_connection():
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    config = DB_CONFIG.copy()
+    return mysql.connector.connect(**config)
 
+
+# Tạo database trước khi kết nối vào database.
+if not create_database_if_not_exists():
+    st.stop()
 
 conn = get_connection()
 
@@ -39,47 +88,66 @@ def init_database():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS rooms (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_number TEXT UNIQUE NOT NULL,
-            room_type TEXT NOT NULL,
-            price REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Trống',
-            note TEXT DEFAULT ''
-        )
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            room_number VARCHAR(20) UNIQUE NOT NULL,
+            room_type VARCHAR(100) NOT NULL,
+            price DECIMAL(15,2) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Trống',
+            note TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS guests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL,
-            phone TEXT,
-            id_number TEXT,
-            address TEXT,
-            created_at TEXT NOT NULL
-        )
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            full_name VARCHAR(150) NOT NULL,
+            phone VARCHAR(30),
+            id_number VARCHAR(50),
+            address VARCHAR(255),
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id INTEGER NOT NULL,
-            guest_id INTEGER NOT NULL,
-            check_in TEXT NOT NULL,
-            check_out TEXT,
-            adults INTEGER DEFAULT 1,
-            children INTEGER DEFAULT 0,
-            total_amount REAL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'Đang ở',
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            room_id INT NOT NULL,
+            guest_id INT NOT NULL,
+            check_in DATE NOT NULL,
+            check_out DATE,
+            adults INT DEFAULT 1,
+            children INT DEFAULT 0,
+            total_amount DECIMAL(15,2) DEFAULT 0,
+            status VARCHAR(30) NOT NULL DEFAULT 'Đang ở',
             note TEXT DEFAULT '',
-            FOREIGN KEY(room_id) REFERENCES rooms(id),
-            FOREIGN KEY(guest_id) REFERENCES guests(id)
-        )
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_booking_room
+                FOREIGN KEY(room_id) REFERENCES rooms(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE,
+            CONSTRAINT fk_booking_guest
+                FOREIGN KEY(guest_id) REFERENCES guests(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
     conn.commit()
 
 
 init_database()
+
+
+
+def ensure_connection():
+    global conn
+    try:
+        if conn is None or not conn.is_connected():
+            conn = get_connection()
+        else:
+            conn.ping(reconnect=True, attempts=3, delay=1)
+    except Exception:
+        conn = get_connection()
+    return conn
 
 
 # ============================================================
@@ -91,6 +159,8 @@ def format_money(amount):
 
 
 def get_rooms():
+    ensure_connection()
+    ensure_connection()
     return pd.read_sql_query(
         "SELECT * FROM rooms ORDER BY room_number",
         conn
@@ -98,6 +168,8 @@ def get_rooms():
 
 
 def get_guests():
+    ensure_connection()
+    ensure_connection()
     return pd.read_sql_query(
         "SELECT * FROM guests ORDER BY id DESC",
         conn
@@ -105,6 +177,7 @@ def get_guests():
 
 
 def get_bookings():
+    ensure_connection()
     query = """
         SELECT
             bookings.id,
@@ -131,6 +204,7 @@ def get_bookings():
 
 
 def seed_rooms():
+    ensure_connection()
     cursor = conn.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM rooms")
@@ -151,7 +225,7 @@ def seed_rooms():
         cursor.executemany("""
             INSERT INTO rooms
             (room_number, room_type, price, status, note)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
         """, sample_rooms)
 
         conn.commit()
@@ -261,10 +335,11 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.success("🟢 MySQL Aiven: Đã kết nối")
 st.sidebar.info(
     "Ứng dụng quản lý phòng khách sạn\n\n"
     "• Streamlit\n"
-    "• SQLite\n"
+    "• MySQL Aiven\n"
     "• Python"
 )
 
@@ -551,7 +626,7 @@ elif menu == "🛏️ Quản lý phòng":
                         cursor.execute("""
                             INSERT INTO rooms
                             (room_number, room_type, price, status, note)
-                            VALUES (?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s)
                         """, (
                             room_number.strip(),
                             room_type,
@@ -568,7 +643,7 @@ elif menu == "🛏️ Quản lý phòng":
 
                         st.rerun()
 
-                    except sqlite3.IntegrityError:
+                    except IntegrityError:
 
                         st.error(
                             "Số phòng này đã tồn tại."
@@ -668,11 +743,11 @@ elif menu == "🛏️ Quản lý phòng":
 
                     cursor.execute("""
                         UPDATE rooms
-                        SET room_type = ?,
-                            price = ?,
-                            status = ?,
-                            note = ?
-                        WHERE id = ?
+                        SET room_type = %s,
+                            price = %s,
+                            status = %s,
+                            note = %s
+                        WHERE id = %s
                     """, (
                         new_type,
                         new_price,
@@ -806,7 +881,7 @@ elif menu == "👤 Quản lý khách":
                     cursor.execute("""
                         INSERT INTO guests
                         (full_name, phone, id_number, address, created_at)
-                        VALUES (?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s)
                     """, (
                         full_name.strip(),
                         phone,
@@ -953,7 +1028,7 @@ elif menu == "📝 Check-in":
                             status,
                             note
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         room_id,
                         guest_id,
@@ -967,7 +1042,7 @@ elif menu == "📝 Check-in":
                     cursor.execute("""
                         UPDATE rooms
                         SET status = 'Đang ở'
-                        WHERE id = ?
+                        WHERE id = %s
                     """, (room_id,))
 
                     conn.commit()
@@ -1074,10 +1149,10 @@ elif menu == "🚪 Check-out":
 
             cursor.execute("""
                 UPDATE bookings
-                SET check_out = ?,
-                    total_amount = ?,
+                SET check_out = %s,
+                    total_amount = %s,
                     status = 'Đã trả phòng'
-                WHERE id = ?
+                WHERE id = %s
             """, (
                 check_out_date.strftime("%Y-%m-%d"),
                 total,
@@ -1090,7 +1165,7 @@ elif menu == "🚪 Check-out":
                 WHERE id = (
                     SELECT room_id
                     FROM bookings
-                    WHERE id = ?
+                    WHERE id = %s
                 )
             """, (booking_id,))
 
@@ -1196,7 +1271,7 @@ elif menu == "📅 Đặt phòng":
                         status,
                         note
                     )
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (
                     room_id,
                     guest_id,
@@ -1208,7 +1283,7 @@ elif menu == "📅 Đặt phòng":
                 cursor.execute("""
                     UPDATE rooms
                     SET status = 'Đang ở'
-                    WHERE id = ?
+                    WHERE id = %s
                 """, (room_id,))
 
                 conn.commit()
@@ -1348,3 +1423,4 @@ st.sidebar.markdown("---")
 st.sidebar.caption(
     "© 2026 Hotel Manager | Streamlit"
 )
+
