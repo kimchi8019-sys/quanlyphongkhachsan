@@ -93,7 +93,7 @@ def init_database():
             room_type VARCHAR(100) NOT NULL,
             price DECIMAL(15,2) NOT NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'Trống',
-            note TEXT DEFAULT '',
+            note VARCHAR(500) DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
@@ -120,7 +120,7 @@ def init_database():
             children INT DEFAULT 0,
             total_amount DECIMAL(15,2) DEFAULT 0,
             status VARCHAR(30) NOT NULL DEFAULT 'Đang ở',
-            note TEXT DEFAULT '',
+            note VARCHAR(500) DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT fk_booking_room
                 FOREIGN KEY(room_id) REFERENCES rooms(id)
